@@ -1,20 +1,29 @@
-// src/web_socket_gateway.rs
 
+//src/web_socket_gateway.rs
+
+///The WebSocketGateway is solely responsible for setting up the WebSocket server, accepting connections, 
+///and managing the basic message flows (incoming and outgoing) without processing them.
+
+use tokio::sync::{mpsc, Mutex};
 use tokio::net::TcpListener;
-use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
-use futures_util::{StreamExt, SinkExt};
-use tokio::sync::mpsc::{self, Sender, Receiver};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use futures_util::{SinkExt, StreamExt};
 
+/// The variable incoming_tx in the context of the WebSocketGateway code you provided is named to indicate its role and functionality:
+///
+/// # incoming: This prefix suggests that the variable is related to data or messages that are coming into the system. In this case, 
+///   it refers to messages received from WebSocket clients that are connected to the server.
+/// # tx: This is an abbreviation for "transmitter" or "transmit". In asynchronous programming, particularly when using channels, 
+///   tx is commonly used to denote the sending end of a channel. This part of the channel is responsible for transmitting data to 
+///   another part of the program, typically a corresponding receiver (rx).
 pub struct WebSocketGateway {
-    incoming_tx: Sender<Message>,
-    outgoing_rx: Arc<Mutex<Receiver<Message>>>,
+    incoming_tx: mpsc::Sender<Message>,
+    outgoing_rx: Arc<Mutex<mpsc::Receiver<Message>>>,
 }
 
 impl WebSocketGateway {
-    pub fn new() -> (Self, Receiver<Message>, Sender<Message>) {
+    pub fn new() -> (Self, mpsc::Receiver<Message>, mpsc::Sender<Message>) {
         let (incoming_tx, incoming_rx) = mpsc::channel(100);
         let (outgoing_tx, outgoing_rx) = mpsc::channel(100);
 
@@ -29,52 +38,36 @@ impl WebSocketGateway {
     }
 
     pub async fn run(&self, addr: &str) {
-        let listener = TcpListener::bind(addr)
-            .await
-            .expect("Can't bind to address");
-
+        let listener = TcpListener::bind(addr).await.expect("Can't bind to address");
         println!("Listening on: {}", addr);
 
-        let incoming_tx = self.incoming_tx.clone();
-        let outgoing_rx = Arc::clone(&self.outgoing_rx);
-
         while let Ok((stream, _)) = listener.accept().await {
-            let incoming_tx = incoming_tx.clone();
-            let outgoing_rx = Arc::clone(&outgoing_rx);
+            let incoming_tx = self.incoming_tx.clone();
+            let outgoing_rx = self.outgoing_rx.clone();
+            
             tokio::spawn(async move {
-                let ws_stream = accept_async(stream)
+                let ws_stream = tokio_tungstenite::accept_async(stream)
                     .await
-                    .expect("Error during the websocket handshake occurred");
-
+                    .expect("Error during the websocket handshake");
                 let (mut write, mut read) = ws_stream.split();
 
-                let incoming_tx_clone = incoming_tx.clone();
-                let outgoing_rx_clone = Arc::clone(&outgoing_rx);
-
-                tokio::spawn(async move {
-                    while let Some(message) = read.next().await {
-                        match message {
-                            Ok(msg) => {
-                                if let Err(e) = incoming_tx_clone.send(msg).await {
-                                    eprintln!("Failed to send incoming message: {}", e);
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Error receiving message: {}", e);
-                                break;
-                            }
-                        }
-                    }
-                });
-
-                tokio::spawn(async move {
-                    while let Some(msg) = outgoing_rx_clone.lock().await.recv().await {
-                        if let Err(e) = write.send(msg).await {
-                            eprintln!("Failed to send outgoing message: {}", e);
+                // Read messages from WebSocket and forward them
+                while let Some(message) = read.next().await {
+                    if let Ok(msg) = message {
+                        if incoming_tx.send(msg).await.is_err() {
+                            eprintln!("Error sending message to the channel");
                             break;
                         }
                     }
-                });
+                }
+
+                // Read messages from outgoing_rx and send to WebSocket
+                while let Some(message) = outgoing_rx.lock().await.recv().await {
+                    if let Err(e) = write.send(message).await {
+                        eprintln!("Error sending message to WebSocket: {}", e);
+                        break;
+                    }
+                }
             });
         }
     }
