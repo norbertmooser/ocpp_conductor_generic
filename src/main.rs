@@ -1,5 +1,4 @@
 use std::env;
-use std::fs;
 use tokio::time::{sleep, Duration};
 mod dispatcher;
 mod web_socket_gateway;
@@ -9,7 +8,7 @@ mod charger_configs;
 use web_socket_gateway::WebSocketGateway;
 use dispatcher::handle_incoming_messages;
 use tokio_tungstenite::tungstenite::protocol::Message;
-use charger_configs::Config;
+use charger_configs::ChargerConfig;
 
 #[tokio::main]
 async fn main() {
@@ -21,16 +20,11 @@ async fn main() {
     }
     let charger_name = &args[1];
 
-    // Read the configuration file
-    let config_data = fs::read_to_string("charger_configs.json").expect("Unable to read config file");
-    let config: Config = serde_json::from_str(&config_data).expect("JSON was not well-formatted");
-
-    // Find the charger configuration by name
-    let charger_config = config.chargers.iter().find(|&c| c.name == *charger_name);
-    let charger_config = match charger_config {
-        Some(config) => config,
-        None => {
-            eprintln!("Charger {} not found in configuration", charger_name);
+   // Load the charger configuration
+   let charger_config: ChargerConfig = match charger_configs::load_charger_config(charger_name) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Failed to load charger configuration: {}", e);
             std::process::exit(1);
         }
     };
