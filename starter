@@ -1,0 +1,4 @@
+#!/bin/bash
+(
+    cd /home/norbert/VSCodeProjects/Rust/ocpp_conductor_generic && ./target/debug/ocpp_conductor_generic Charger002
+)

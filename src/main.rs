@@ -67,10 +67,10 @@ async fn main() {
 
     // Spawn a task to run a counter concurrently
     tokio::spawn(async move {
-        let mut counter: i32 = 0;
+        let mut _counter: i32 = 0;
         loop {
-            println!("Counter: {}", counter);
-            counter += 1;
+            // println!("Counter: {}", counter);
+            _counter += 1;
             sleep(Duration::from_secs(1)).await;
         }
     });
